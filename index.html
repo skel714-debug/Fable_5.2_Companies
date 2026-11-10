@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>50 companies in five dimensions - WebXR 3D scatter plot</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1220; color: #eef2f8;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  canvas { display: block; }
+  #ui { position: fixed; top: 12px; left: 12px; width: 340px; max-width: calc(100vw - 24px);
+    box-sizing: border-box; padding: 14px 16px; border: 1px solid #3a4a66; border-radius: 10px;
+    background: rgba(14, 22, 38, 0.92); pointer-events: none; }
+  #ui h1 { margin: 0 0 6px; font-size: 19px; line-height: 1.25; }
+  #ui p { margin: 6px 0; font-size: 13px; line-height: 1.4; color: #c5d0e2; }
+  #ui p.warn { color: #ffcf7a; font-weight: 600; }
+  #ui button { pointer-events: auto; display: block; width: 100%; margin: 8px 0 0; padding: 14px 16px;
+    font-family: inherit; font-size: 17px; font-weight: 600; color: #0b1220; background: #7fd0ff;
+    border: 0; border-radius: 8px; cursor: pointer; }
+  #ui button:disabled { background: #3a4a66; color: #9fb0cc; cursor: default; }
+  #ui button[hidden] { display: none; }
+  #status:empty { display: none; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="ui">
+  <h1>50 companies in five dimensions</h1>
+  <p>A 3D scatter plot: revenue, market value and employees on log scales. Colour shows sector, size shows company age.</p>
+  <p class="warn">The figures are approximate and illustrative (roughly 2024-25). This is not a citable source.</p>
+  <button id="btnVR" disabled>Checking for VR...</button>
+  <button id="btnAR" hidden>Enter mixed reality (passthrough)</button>
+  <p>On a desktop: drag to orbit, scroll to zoom, click a sphere for details, click a legend row to hide or show a sector.</p>
+  <p id="status">Loading the 3D library... If this message stays, the CDN could not be reached.</p>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const statusEl = document.getElementById('status');
+statusEl.textContent = '';
+
+/* =====================================================================
+   1. DATA - hard-coded, approximate and illustrative. Not a citable source.
+   Columns: name, sector index, annual revenue (US$ billions),
+   market capitalisation (US$ billions), employees (thousands), year founded.
+   Revenue and headcount are roughly fiscal 2024; market values roughly mid-2025.
+   Banks use net revenue. "Founded" is the oldest predecessor company.
+   ===================================================================== */
+const DATA_YEAR = 2025;
+const SECTORS = [
+  { name: 'Technology',         color: '#56B4E9' },
+  { name: 'Retail & logistics', color: '#E69F00' },
+  { name: 'Energy',             color: '#CC79A7' },
+  { name: 'Finance',            color: '#F0E442' },
+  { name: 'Healthcare',         color: '#2DC08F' }
+];
+const RAW = [
+  // Technology
+  ['Apple',               0, 391, 3100,  164, 1976],
+  ['Microsoft',           0, 245, 3800,  228, 1975],
+  ['Nvidia',              0, 130, 4000,   36, 1993],
+  ['Alphabet',            0, 350, 2200,  183, 1998],
+  ['Meta Platforms',      0, 165, 1800,   74, 2004],
+  ['TSMC',                0,  90, 1150,   83, 1987],
+  ['Samsung Electronics', 0, 220,  300,  262, 1969],
+  ['Oracle',              0,  53,  650,  159, 1977],
+  ['IBM',                 0,  63,  260,  270, 1911],
+  ['Intel',               0,  53,  100,  109, 1968],
+  // Retail & logistics
+  ['Walmart',             1, 681,  780, 2100, 1962],
+  ['Amazon',              1, 638, 2300, 1556, 1994],
+  ['Costco',              1, 254,  430,  333, 1983],
+  ['Home Depot',          1, 160,  370,  470, 1978],
+  ['Target',              1, 107,   45,  440, 1902],
+  ['Kroger',              1, 147,   47,  409, 1883],
+  ['Alibaba',             1, 131,  280,  200, 1999],
+  ['UPS',                 1,  91,   85,  490, 1907],
+  ['FedEx',               1,  88,   55,  500, 1971],
+  ['Tesco',               1,  88,   37,  330, 1919],
+  // Energy
+  ['Saudi Aramco',        2, 480, 1600,   75, 1933],
+  ['ExxonMobil',          2, 340,  470,   61, 1870],
+  ['Chevron',             2, 200,  270,   45, 1879],
+  ['Shell',               2, 284,  210,   96, 1907],
+  ['BP',                  2, 190,   85,  100, 1909],
+  ['TotalEnergies',       2, 196,  135,  102, 1924],
+  ['PetroChina',          2, 410,  200,  370, 1999],
+  ['ConocoPhillips',      2,  57,  115,   12, 1875],
+  ['Equinor',             2, 103,   65,   25, 1972],
+  ['Petrobras',           2,  91,   75,   47, 1953],
+  // Finance
+  ['JPMorgan Chase',      3, 180,  800,  317, 1799],
+  ['Berkshire Hathaway',  3, 371, 1050,  392, 1839],
+  ['Bank of America',     3, 102,  350,  213, 1904],
+  ['Wells Fargo',         3,  82,  260,  217, 1852],
+  ['Goldman Sachs',       3,  54,  215,   46, 1869],
+  ['Visa',                3,  36,  680,   32, 1958],
+  ['Mastercard',          3,  28,  510,   35, 1966],
+  ['HSBC',                3,  66,  210,  211, 1865],
+  ['ICBC',                3, 115,  330,  415, 1984],
+  ['BlackRock',           3,  20,  160,   21, 1988],
+  // Healthcare
+  ['UnitedHealth Group',  4, 400,  280,  400, 1977],
+  ['Eli Lilly',           4,  45,  700,   47, 1876],
+  ['Johnson & Johnson',   4,  89,  400,  138, 1886],
+  ['Novo Nordisk',        4,  42,  250,   77, 1923],
+  ['Pfizer',              4,  64,  140,   81, 1849],
+  ['Merck & Co.',         4,  64,  200,   75, 1891],
+  ['AbbVie',              4,  56,  340,   55, 2013],
+  ['Roche',               4,  69,  260,  103, 1896],
+  ['CVS Health',          4, 373,   85,  300, 1963],
+  ['AstraZeneca',         4,  54,  220,   94, 1999]
+];
+const COMPANIES = RAW.map(([name, sector, revenue, marketCap, employees, founded]) =>
+  ({ name, sector, revenue, marketCap, employees, founded, age: DATA_YEAR - founded }));
+
+/* =====================================================================
+   2. SCALES AND CONSTANTS (all three axes are log scales)
+   ===================================================================== */
+const S = 0.8, H = S / 2;                       // plot cube: 0.8 m
+const AXES = {
+  x: { title: 'Revenue, US$ (log)', min: 15, max: 900,
+       ticks: [[25, '$25B'], [50, '$50B'], [100, '$100B'], [200, '$200B'], [400, '$400B']] },
+  y: { title: 'Market value, US$ (log)', min: 15, max: 7000,
+       ticks: [[30, '$30B'], [100, '$100B'], [300, '$300B'], [1000, '$1T'], [3000, '$3T']] },
+  z: { title: 'Employees (log)', min: 6, max: 3500,
+       ticks: [[10, '10k'], [30, '30k'], [100, '100k'], [300, '300k'], [1000, '1M']] }
+};
+const axisPos = (k, v) =>
+  (Math.log10(v / AXES[k].min) / Math.log10(AXES[k].max / AXES[k].min) - 0.5) * S;
+const radiusFor = (age) => 0.006 + 0.0013 * Math.sqrt(age);   // metres
+
+const DIST = 1.8, EYE_DROP = 0.05, DEFAULT_YAW = 0.45, TWIST_GAIN = 1.5, IDLE_MS = 45000;
+const STAGE_HOME = new THREE.Vector3(0, 1.45, -1.8);
+const TEXT_VR = 'Point at a sphere and pull the trigger to see its details; hold the trigger on empty space and twist your wrist to turn the plot.';
+const TEXT_DESKTOP = 'Click a sphere to see its details; drag to orbit and scroll to zoom.';
+let inXR = false, xrMode = null, floorKnown = true;
+
+/* =====================================================================
+   3. RENDERER, SCENE, CAMERA
+   ===================================================================== */
+const BG = new THREE.Color(0x0b1220);
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.xr.enabled = true;
+if (renderer.xr.setFoveation) renderer.xr.setFoveation(0.3);   // keeps side panels sharp
+document.body.appendChild(renderer.domElement);
+const MAX_ANISO = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+
+const scene = new THREE.Scene();
+scene.background = BG;
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.05, 60);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.minDistance = 0.5; controls.maxDistance = 9;
+
+const ground = new THREE.GridHelper(12, 24, 0x33466a, 0x1c2942);
+scene.add(ground);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x59657a, 2.0));
+
+const stage = new THREE.Group();                 // everything; placed in front of the user
+stage.position.copy(STAGE_HOME); scene.add(stage);
+const plot = new THREE.Group();                  // the part that rotates
+plot.rotation.y = DEFAULT_YAW; stage.add(plot);
+const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+sun.position.set(1.0, 2.5, 2.0); stage.add(sun); stage.add(sun.target);
+
+function homeCamera() {
+  const aspect = window.innerWidth / window.innerHeight;
+  camera.position.set(STAGE_HOME.x, STAGE_HOME.y + EYE_DROP, STAGE_HOME.z + Math.max(2.4, 2.3 / aspect));
+  controls.target.copy(STAGE_HOME); controls.update(); controls.saveState();
+}
+homeCamera();
+
+/* =====================================================================
+   4. CANVAS-TEXT HELPERS (opaque backing, depth test left on)
+   ===================================================================== */
+const FONT = 'Roboto, "Segoe UI", "Helvetica Neue", Arial, sans-serif';
+const PX_PER_M = 1800;
+const INK = '#f2f5fa', MUTED = '#9fb0cc', PANEL_BG = '#0e1626', EDGE = '#5b6b88', AMBER = '#ffcf7a';
+const pickables = [];      // everything a ray can select
+const billboards = [];     // everything that turns to face the viewer
+
+function drawBacking(ctx, w, h, bg = PANEL_BG, edge = EDGE, lw = 4) {
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = edge; ctx.lineWidth = lw; ctx.strokeRect(lw / 2, lw / 2, w - lw, h - lw);
+}
+function fitText(ctx, text, x, y, maxW, px, weight = '600', color = INK, align = 'left') {
+  ctx.font = `${weight} ${px}px ${FONT}`;
+  const tw = ctx.measureText(text).width;
+  if (tw > maxW) ctx.font = `${weight} ${Math.floor(px * maxW / tw)}px ${FONT}`;
+  ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y);
+}
+function wrapLines(ctx, text, maxW) {
+  const lines = []; let line = '';
+  for (const word of text.split(' ')) {
+    const trial = line ? line + ' ' + word : word;
+    if (line && ctx.measureText(trial).width > maxW) { lines.push(line); line = word; } else line = trial;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+function makePanel(wM, hM, draw) {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(wM * PX_PER_M); canvas.height = Math.round(hM * PX_PER_M);
+  const ctx = canvas.getContext('2d');
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = MAX_ANISO;
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(wM, hM), new THREE.MeshBasicMaterial({ map: tex }));
+  mesh.userData.w = wM; mesh.userData.h = hM;
+  mesh.userData.redraw = (arg) => { draw(ctx, canvas.width, canvas.height, arg); tex.needsUpdate = true; };
+  mesh.userData.redraw();
+  return mesh;
+}
+const scratch = document.createElement('canvas').getContext('2d');
+function makeLabel(text, em, weight = '600', bg = PANEL_BG, edge = EDGE) {
+  const px = Math.round(em * PX_PER_M);
+  scratch.font = `${weight} ${px}px ${FONT}`;
+  const wPx = Math.ceil(scratch.measureText(text).width + px * 0.9), hPx = Math.round(px * 1.55);
+  return makePanel(wPx / PX_PER_M, hPx / PX_PER_M, (ctx, w, h) => {
+    drawBacking(ctx, w, h, bg, edge, 3);
+    ctx.font = `${weight} ${px}px ${FONT}`;
+    ctx.fillStyle = INK; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(text, w / 2, h / 2 + px * 0.04);
+  });
+}
+function makePickable(mesh, data) {            // adds a white border that shows on hover
+  Object.assign(mesh.userData, data, { active: true });
+  const glow = new THREE.Mesh(
+    new THREE.PlaneGeometry(mesh.userData.w + 0.012, mesh.userData.h + 0.012),
+    new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  glow.position.z = -0.004; glow.visible = false;
+  mesh.add(glow); mesh.userData.glow = glow;
+  pickables.push(mesh);
+}
+
+/* =====================================================================
+   5. THE PLOT: frame, grids, points, colliders, drop lines
+   ===================================================================== */
+function lineSegs(arr, color) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
+  return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color }));
+}
+{
+  const e = [];
+  for (const a of [-H, H]) for (const b of [-H, H])
+    e.push(-H, a, b, H, a, b,   a, -H, b, a, H, b,   a, b, -H, a, b, H);
+  plot.add(lineSegs(e, 0x8fa3c4));
+  const f = [];
+  for (const [v] of AXES.x.ticks) { const x = axisPos('x', v); f.push(x, -H, -H, x, -H, H); }
+  for (const [v] of AXES.z.ticks) { const z = axisPos('z', v); f.push(-H, -H, z, H, -H, z); }
+  plot.add(lineSegs(f, 0x5a6f92));
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(S, S), new THREE.MeshBasicMaterial({
+    color: 0x0e1626, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }));
+  floor.rotation.x = -Math.PI / 2; floor.position.y = -H - 0.002; plot.add(floor);
+}
+function wallLines(axis, sign) {                 // grid on one side wall; only far walls are shown
+  const a = [], c = sign * H;
+  for (const [v] of AXES.y.ticks) {
+    const y = axisPos('y', v);
+    if (axis === 'x') a.push(c, y, -H, c, y, H); else a.push(-H, y, c, H, y, c);
+  }
+  if (axis === 'x') for (const [v] of AXES.z.ticks) { const z = axisPos('z', v); a.push(c, -H, z, c, H, z); }
+  else for (const [v] of AXES.x.ticks) { const x = axisPos('x', v); a.push(x, -H, c, x, H, c); }
+  const w = lineSegs(a, 0x3d4f70); plot.add(w); return w;
+}
+const wallXn = wallLines('x', -1), wallXp = wallLines('x', 1);
+const wallZn = wallLines('z', -1), wallZp = wallLines('z', 1);
+
+const sectorGroups = SECTORS.map(() => { const g = new THREE.Group(); plot.add(g); return g; });
+const sphereGeo = new THREE.SphereGeometry(1, 18, 12);
+const colliderGeo = new THREE.SphereGeometry(1, 10, 8);
+const colliderMat = new THREE.MeshBasicMaterial({ visible: false });
+const points = COMPANIES.map((c, index) => {
+  const r = radiusFor(c.age), color = new THREE.Color(SECTORS[c.sector].color);
+  const mesh = new THREE.Mesh(sphereGeo, new THREE.MeshLambertMaterial({ color }));
+  mesh.position.set(axisPos('x', c.revenue), axisPos('y', c.marketCap), axisPos('z', c.employees));
+  mesh.scale.setScalar(r);
+  const collider = new THREE.Mesh(colliderGeo, colliderMat);   // enlarged, invisible target
+  collider.position.copy(mesh.position);
+  collider.scale.setScalar(Math.max(r * 1.9, 0.034));
+  collider.userData = { kind: 'point', index, active: true };
+  sectorGroups[c.sector].add(mesh, collider);
+  pickables.push(collider);
+  return { company: c, mesh, collider, r, color };
+});
+
+function makeFeet(xz, color) {                   // small discs where drop lines meet the floor
+  const SEG = 10, R = 0.009, y = -H + 0.0015, verts = [], idx = [];
+  for (let i = 0; i < xz.length; i += 2) {
+    const base = verts.length / 3;
+    verts.push(xz[i], y, xz[i + 1]);
+    for (let k = 0; k < SEG; k++) {
+      const a = k / SEG * Math.PI * 2;
+      verts.push(xz[i] + Math.cos(a) * R, y, xz[i + 1] + Math.sin(a) * R);
+    }
+    for (let k = 0; k < SEG; k++) idx.push(base, base + 1 + k, base + 1 + (k + 1) % SEG);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3)); g.setIndex(idx);
+  return new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide }));
+}
+SECTORS.forEach((s, si) => {                     // depth cue: a line from each point to the floor
+  const lines = [], feet = [];
+  for (const p of points) if (p.company.sector === si) {
+    const { x, y, z } = p.mesh.position;
+    lines.push(x, y, z, x, -H, z); feet.push(x, z);
+  }
+  const dim = new THREE.Color(s.color).multiplyScalar(0.7);
+  sectorGroups[si].add(lineSegs(lines, dim), makeFeet(feet, dim));
+});
+
+// thick stem for the hovered or selected point, ring for the selected point, name tag on hover
+const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.003, 1, 8),
+  new THREE.MeshBasicMaterial({ color: 0xffffff }));
+stem.visible = false; plot.add(stem);
+function setStem(p) {
+  stem.visible = !!p;
+  if (!p) return;
+  const len = Math.max(p.mesh.position.y + H, 0.001);
+  stem.position.set(p.mesh.position.x, -H + len / 2, p.mesh.position.z);
+  stem.scale.set(1, len, 1);
+}
+const ring = new THREE.Mesh(new THREE.RingGeometry(1.35, 1.6, 32),
+  new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
+ring.visible = false; plot.add(ring); billboards.push(ring);
+
+const tagCanvas = document.createElement('canvas'); tagCanvas.width = 1024; tagCanvas.height = 100;
+const tagCtx = tagCanvas.getContext('2d');
+const tagTex = new THREE.CanvasTexture(tagCanvas);
+tagTex.colorSpace = THREE.SRGBColorSpace; tagTex.anisotropy = MAX_ANISO;
+const tag = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: tagTex }));
+tag.visible = false; plot.add(tag); billboards.push(tag);
+let tagFor = null;
+function showTag(p) {
+  if (p === tagFor) return;
+  tagFor = p; tag.visible = !!p;
+  if (!p) return;
+  const W = tagCanvas.width, Ht = tagCanvas.height;
+  tagCtx.font = `700 56px ${FONT}`;
+  const tw = Math.min(Math.ceil(tagCtx.measureText(p.company.name).width) + 56, W);
+  tagCtx.fillStyle = PANEL_BG; tagCtx.fillRect(0, 0, W, Ht);
+  tagCtx.strokeStyle = SECTORS[p.company.sector].color; tagCtx.lineWidth = 6;
+  tagCtx.strokeRect(3, 3, tw - 6, Ht - 6);
+  tagCtx.fillStyle = INK; tagCtx.textAlign = 'center'; tagCtx.textBaseline = 'middle';
+  tagCtx.fillText(p.company.name, tw / 2, Ht / 2 + 2);
+  tagTex.repeat.set(tw / W, 1); tagTex.needsUpdate = true;
+  tag.scale.set(tw / PX_PER_M, Ht / PX_PER_M, 1);
+  tag.position.copy(p.mesh.position); tag.position.y += p.r * 1.7 + 0.045;
+}
+
+// axis titles and tick labels (positions are set every frame in layoutAxes)
+const axisUI = {};
+for (const k of ['x', 'y', 'z']) {
+  const title = makeLabel(AXES[k].title, 0.03, '700', '#16233a', '#8fa3c4');
+  plot.add(title); billboards.push(title);
+  const ticks = AXES[k].ticks.map(([v, text]) => {
+    const mesh = makeLabel(text, 0.026);
+    plot.add(mesh); billboards.push(mesh);
+    return { p: axisPos(k, v), mesh };
+  });
+  axisUI[k] = { title, ticks };
+}
+
+/* =====================================================================
+   6. IN-SCENE PANELS: title, instruction, legend, details, exit
+   ===================================================================== */
+const titlePanel = makePanel(1.10, 0.14, (ctx, w, h) => {
+  drawBacking(ctx, w, h);
+  fitText(ctx, '50 companies in five dimensions', w / 2, h * 0.36, w - 80, h * 0.36, '700', INK, 'center');
+  fitText(ctx, 'Figures are approximate and illustrative (c. 2024-25) - not a citable source.',
+    w / 2, h * 0.76, w - 80, h * 0.2, '500', AMBER, 'center');
+});
+titlePanel.position.set(0, 0.66, 0.40); stage.add(titlePanel); billboards.push(titlePanel);
+
+const instruction = makePanel(1.10, 0.13, (ctx, w, h, text) => {
+  text = text || (inXR ? TEXT_VR : TEXT_DESKTOP);
+  drawBacking(ctx, w, h, '#14324a', '#7fd0ff', 6);
+  let px = Math.round(h * 0.27), lines;
+  for (;;) {
+    ctx.font = `600 ${px}px ${FONT}`;
+    lines = wrapLines(ctx, text, w - 110);
+    if (lines.length <= 2 || px <= 30) break;
+    px -= 3;
+  }
+  const lh = px * 1.3, y0 = h / 2 - (lines.length - 1) * lh / 2;
+  ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  lines.forEach((l, i) => ctx.fillText(l, w / 2, y0 + i * lh));
+});
+instruction.position.set(0, -0.74, 0.25); stage.add(instruction); billboards.push(instruction);
+
+const legend = new THREE.Group();
+legend.position.set(-0.95, 0, 0.12); stage.add(legend); billboards.push(legend);
+const legendHeader = makePanel(0.40, 0.085, (ctx, w, h) => {
+  drawBacking(ctx, w, h);
+  fitText(ctx, 'Sectors', 28, h * 0.34, w - 56, h * 0.34, '700');
+  fitText(ctx, inXR ? 'Point + trigger to hide or show' : 'Click a row to hide or show',
+    28, h * 0.74, w - 56, h * 0.25, '500', MUTED);
+});
+legendHeader.position.y = 0.2315; legend.add(legendHeader);
+const legendRows = SECTORS.map((s, i) => {
+  const row = makePanel(0.40, 0.06, (ctx, w, h, hidden) => {
+    drawBacking(ctx, w, h, hidden ? '#0a0f1a' : '#111c30');
+    ctx.beginPath(); ctx.arc(h * 0.55, h / 2, h * 0.26, 0, Math.PI * 2);
+    if (hidden) { ctx.strokeStyle = s.color; ctx.lineWidth = 5; ctx.stroke(); }
+    else { ctx.fillStyle = s.color; ctx.fill(); }
+    fitText(ctx, s.name, h * 1.1, h / 2, w - h * 1.1 - 190, h * 0.42, '600', hidden ? '#7f8aa0' : INK);
+    fitText(ctx, hidden ? 'hidden' : 'shown', w - 28, h / 2, 150, h * 0.3, '500',
+      hidden ? '#ffb454' : '#8fd18f', 'right');
+  });
+  row.position.y = 0.151 - 0.068 * i; legend.add(row);
+  makePickable(row, { kind: 'legend', sector: i });
+  return row;
+});
+const sizeKey = makePanel(0.40, 0.115, (ctx, w, h) => {
+  drawBacking(ctx, w, h);
+  fitText(ctx, 'Size = company age', 28, 38, w - 56, 38, '600');
+  [25, 100, 200].forEach((age, i) => {
+    const cx = w * (0.2 + 0.3 * i);
+    ctx.beginPath(); ctx.arc(cx, 112, radiusFor(age) * PX_PER_M, 0, Math.PI * 2);
+    ctx.fillStyle = '#c9d4e6'; ctx.fill();
+    fitText(ctx, age + ' yrs', cx, 180, 200, 30, '500', MUTED, 'center');
+  });
+});
+sizeKey.position.y = -0.2165; legend.add(sizeKey);
+
+const money = (b) => b >= 1000
+  ? '$' + (b / 1000).toFixed(2).replace(/\.?0+$/, '') + ' trillion'
+  : '$' + b + ' billion';
+const people = (k) => Math.round(k * 1000).toLocaleString('en-US');
+const detail = makePanel(0.50, 0.42, (ctx, w, h, c) => {
+  const col = c ? SECTORS[c.sector].color : EDGE;
+  drawBacking(ctx, w, h, PANEL_BG, col, 8);
+  if (!c) return;
+  ctx.fillStyle = col; ctx.beginPath(); ctx.arc(58, 62, 16, 0, Math.PI * 2); ctx.fill();
+  fitText(ctx, SECTORS[c.sector].name, 90, 64, w - 130, 36, '600', col);
+  fitText(ctx, c.name, 40, 140, w - 80, 68, '700');
+  ctx.fillStyle = '#3a4a66'; ctx.fillRect(40, 192, w - 80, 3);
+  const rows = [['Revenue', money(c.revenue)], ['Market value', money(c.marketCap)],
+    ['Employees', people(c.employees)], ['Founded', `${c.founded} - about ${c.age} years old`]];
+  rows.forEach(([k, v], i) => {
+    const y = 252 + i * 84;
+    fitText(ctx, k, 40, y, 250, 36, '500', MUTED);
+    fitText(ctx, v, 300, y, w - 340, 46, '700');
+  });
+  fitText(ctx, 'Approximate, illustrative figures (c. 2024-25).', 40, 592, w - 80, 30, '500', AMBER);
+  fitText(ctx, 'Not a citable source.', 40, 632, w - 80, 30, '500', AMBER);
+  ctx.fillStyle = '#3a4a66'; ctx.fillRect(40, 668, w - 80, 3);
+  fitText(ctx, inXR ? 'Point here and pull the trigger to close' : 'Click this panel to close',
+    40, 712, w - 80, 30, '500', MUTED);
+});
+detail.position.set(0.97, 0.10, 0.12); detail.visible = false;
+stage.add(detail); billboards.push(detail);
+makePickable(detail, { kind: 'detail' }); detail.userData.active = false;
+
+const exitPanel = makePanel(0.30, 0.10, (ctx, w, h) => {
+  drawBacking(ctx, w, h, '#8f1d2c', '#ffb3bd', 6);
+  fitText(ctx, 'EXIT', w / 2, h * 0.40, w - 40, h * 0.42, '800', '#ffffff', 'center');
+  fitText(ctx, 'point here + pull trigger', w / 2, h * 0.78, w - 40, h * 0.17, '500', '#ffd9de', 'center');
+});
+exitPanel.position.set(0.97, -0.40, 0.12); exitPanel.visible = false;
+stage.add(exitPanel); billboards.push(exitPanel);
+makePickable(exitPanel, { kind: 'exit' }); exitPanel.userData.active = false;
+
+// label de-cluttering list, in priority order: fixed panels, axis titles, then ticks
+const clutter = [];
+const reg = (obj, w, h, fixed) => clutter.push({ obj, w, h, fixed, cx: 0, cy: 0, hw: 0, hh: 0 });
+reg(titlePanel, 1.10, 0.14, true); reg(instruction, 1.10, 0.13, true); reg(legend, 0.40, 0.548, true);
+reg(detail, 0.50, 0.42, true); reg(exitPanel, 0.30, 0.10, true);
+for (const k of ['x', 'y', 'z']) { const m = axisUI[k].title; reg(m, m.userData.w, m.userData.h, false); }
+for (const i of [2, 0, 4, 1, 3]) for (const k of ['x', 'y', 'z']) {
+  const m = axisUI[k].ticks[i].mesh; reg(m, m.userData.w, m.userData.h, false);
+}
+
+/* =====================================================================
+   7. STATE AND ACTIONS
+   ===================================================================== */
+let selected = null, dirty = false, lastActivity = performance.now();
+let highlighted = new Set();
+const sectorOn = SECTORS.map(() => true);
+const pointers = [];
+const mousePtr = { hover: null };
+
+function markActivity() { lastActivity = performance.now(); dirty = true; }
+function setHighlight(o, on) {
+  const ud = o.userData;
+  if (ud.kind === 'point') {
+    const p = points[ud.index];
+    p.mesh.scale.setScalar(p.r * (on ? 1.3 : 1));
+    if (on) p.mesh.material.emissive.copy(p.color).multiplyScalar(0.45);
+    else p.mesh.material.emissive.setRGB(0, 0, 0);
+  } else if (ud.glow) ud.glow.visible = on;
+}
+function refreshHighlights() {
+  const want = new Set(); let hoverPoint = null;
+  for (const ptr of pointers) if (ptr.hover) {
+    want.add(ptr.hover);
+    if (!hoverPoint && ptr.hover.userData.kind === 'point') hoverPoint = points[ptr.hover.userData.index];
+  }
+  for (const o of highlighted) if (!want.has(o)) setHighlight(o, false);
+  for (const o of want) if (!highlighted.has(o)) setHighlight(o, true);
+  highlighted = want;
+  showTag(hoverPoint);
+  setStem(hoverPoint || selected);
+  renderer.domElement.style.cursor = mousePtr.hover ? 'pointer' : '';
+}
+function selectPoint(p) {
+  selected = p;
+  detail.visible = !!p; detail.userData.active = !!p; ring.visible = !!p;
+  if (p) { detail.userData.redraw(p.company); ring.position.copy(p.mesh.position); ring.scale.setScalar(p.r); }
+  setStem(tagFor || selected);
+}
+function setSectorVisible(i, v) {
+  if (sectorOn[i] === v) return;
+  sectorOn[i] = v; sectorGroups[i].visible = v;
+  for (const p of points) if (p.company.sector === i) p.collider.userData.active = v;
+  legendRows[i].userData.redraw(!v);
+  if (!v && selected && selected.company.sector === i) selectPoint(null);
+}
+function activate(obj) {
+  const ud = obj.userData;
+  instruction.visible = false;
+  if (ud.kind === 'point') selectPoint(points[ud.index]);
+  else if (ud.kind === 'legend') setSectorVisible(ud.sector, !sectorOn[ud.sector]);
+  else if (ud.kind === 'detail') selectPoint(null);
+  else if (ud.kind === 'exit') { const s = renderer.xr.getSession(); if (s) s.end(); }
+}
+function resetAll() {                            // clean starting state for the next person
+  for (let i = 0; i < SECTORS.length; i++) setSectorVisible(i, true);
+  selectPoint(null);
+  plot.rotation.y = DEFAULT_YAW;
+  for (const ptr of pointers) { ptr.trig = false; ptr.grip = false; }
+  instruction.visible = true;
+  if (!inXR) controls.reset();
+  dirty = false; lastActivity = performance.now();
+}
+function refreshModeText() {
+  instruction.userData.redraw(inXR ? TEXT_VR : TEXT_DESKTOP);
+  legendHeader.userData.redraw();
+  if (selected) detail.userData.redraw(selected.company);
+}
+
+/* =====================================================================
+   8. POINTERS: two XR controllers and the desktop mouse
+   ===================================================================== */
+const raycaster = new THREE.Raycaster();
+const hits = [];
+const _v = new THREE.Vector3(), _fwd = new THREE.Vector3(), _local = new THREE.Vector3();
+const _f = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3(), _p = new THREE.Vector3();
+const _dq = new THREE.Quaternion(), _qi = new THREE.Quaternion();
+
+function pick() {                                // uses raycaster.ray as already set
+  hits.length = 0;
+  raycaster.intersectObjects(pickables, false, hits);
+  let ui = null, pt = null, best = Infinity;
+  for (const h of hits) {
+    const ud = h.object.userData;
+    if (!ud.active) continue;
+    if (ud.kind === 'point') {                   // among overlapping colliders, take the best-aimed
+      const d2 = raycaster.ray.distanceSqToPoint(h.object.getWorldPosition(_v));
+      if (d2 < best) { best = d2; pt = h; }
+    } else if (!ui) ui = h;
+  }
+  if (ui && pt) return ui.distance < pt.distance ? ui : pt;
+  return ui || pt;
+}
+
+for (let i = 0; i < 2; i++) {
+  const c = renderer.xr.getController(i);
+  scene.add(c);
+  const rayLine = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]),
+    new THREE.LineBasicMaterial({ color: 0xffffff }));
+  rayLine.scale.z = 2.5; c.add(rayLine);
+  c.add(new THREE.Mesh(new THREE.SphereGeometry(0.012, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffffff })));
+  const cursor = new THREE.Mesh(new THREE.SphereGeometry(0.008, 12, 8),
+    new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  cursor.visible = false; scene.add(cursor);
+  const ptr = { controller: c, rayLine, cursor, hover: null, connected: false,
+    trig: false, grip: false, prevQuat: new THREE.Quaternion() };
+  const startGrab = (key) => {
+    if (!ptr.trig && !ptr.grip) ptr.prevQuat.copy(c.quaternion);
+    ptr[key] = true; instruction.visible = false;
+  };
+  c.addEventListener('connected', () => { ptr.connected = true; });
+  c.addEventListener('disconnected', () => { ptr.connected = false; ptr.trig = ptr.grip = false; });
+  c.addEventListener('selectstart', () => {
+    markActivity();
+    if (ptr.hover) activate(ptr.hover); else startGrab('trig');   // empty space: grab and twist
+  });
+  c.addEventListener('selectend', () => { ptr.trig = false; markActivity(); });
+  c.addEventListener('squeezestart', () => { markActivity(); startGrab('grip'); });
+  c.addEventListener('squeezeend', () => { ptr.grip = false; markActivity(); });
+  pointers.push(ptr);
+}
+pointers.push(mousePtr);
+
+function applyTwist(ptr) {                       // wrist yaw and roll both turn the plot
+  const q = ptr.controller.quaternion;
+  _dq.copy(q).multiply(_qi.copy(ptr.prevQuat).invert());
+  ptr.prevQuat.copy(q);
+  const s = _dq.w < 0 ? -1 : 1;
+  const x = _dq.x * s, y = _dq.y * s, z = _dq.z * s, w = _dq.w * s;
+  _fwd.set(0, 0, -1).applyQuaternion(q);
+  const yaw = 2 * Math.atan2(y, w);
+  const roll = 2 * Math.atan2(x * _fwd.x + y * _fwd.y + z * _fwd.z, w);
+  let d = TWIST_GAIN * (yaw - roll * (1 - _fwd.y * _fwd.y));
+  d = Math.max(-0.5, Math.min(0.5, d));
+  if (Math.abs(d) > 0.0005) { plot.rotation.y += d; if (Math.abs(d) > 0.004) markActivity(); }
+}
+
+const mouse = { ndc: new THREE.Vector2(), inside: false, x: 0, y: 0 };
+const dom = renderer.domElement;
+const setNdc = (e) => mouse.ndc.set(e.clientX / window.innerWidth * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+dom.addEventListener('pointermove', (e) => { setNdc(e); mouse.inside = true; });
+dom.addEventListener('pointerleave', () => { mouse.inside = false; });
+dom.addEventListener('pointerdown', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; markActivity(); });
+dom.addEventListener('pointerup', (e) => {
+  if (renderer.xr.isPresenting || Math.hypot(e.clientX - mouse.x, e.clientY - mouse.y) > 6) return;
+  setNdc(e); camera.updateMatrixWorld(); raycaster.setFromCamera(mouse.ndc, camera);
+  const hit = pick(); if (hit) activate(hit.object);
+});
+dom.addEventListener('wheel', markActivity, { passive: true });
+
+function updatePointers() {
+  const xr = renderer.xr.isPresenting;
+  let changed = false;
+  for (const ptr of pointers) {
+    let hit = null;
+    if (ptr.controller) {
+      const c = ptr.controller;
+      if (xr && ptr.connected && c.visible) {
+        const grabbing = ptr.trig || ptr.grip;
+        raycaster.ray.origin.copy(c.position);
+        raycaster.ray.direction.set(0, 0, -1).applyQuaternion(c.quaternion).normalize();
+        if (!grabbing) hit = pick();
+        ptr.rayLine.scale.z = hit ? hit.distance : 2.5;
+        ptr.rayLine.material.color.setHex(grabbing ? 0xffd166 : 0xffffff);
+      }
+      ptr.cursor.visible = !!hit;
+      if (hit) ptr.cursor.position.copy(hit.point);
+    } else if (!xr && mouse.inside) {
+      camera.updateMatrixWorld(); raycaster.setFromCamera(mouse.ndc, camera);
+      hit = pick();
+    }
+    const obj = hit ? hit.object : null;
+    if (obj !== ptr.hover) { ptr.hover = obj; changed = true; if (obj) markActivity(); }
+  }
+  if (changed) refreshHighlights();              // highlight before the trigger is pulled
+}
+
+/* =====================================================================
+   9. PER-FRAME LAYOUT: placement, axis labels, de-cluttering
+   ===================================================================== */
+const headPos = new THREE.Vector3(0, 1.5, 0), headQuat = new THREE.Quaternion();
+let placePending = false, placeUntil = 0, lastFrame = performance.now();
+let sx = -1, sz = 1;                             // which side of the plot the viewer is on
+
+function placeStage() {                          // 1.8 m ahead of the head, at eye height
+  _fwd.set(0, 0, -1).applyQuaternion(headQuat); _fwd.y = 0;
+  if (_fwd.lengthSq() < 1e-4) _fwd.set(0, 0, -1); else _fwd.normalize();
+  stage.position.set(headPos.x + _fwd.x * DIST, headPos.y - EYE_DROP, headPos.z + _fwd.z * DIST);
+  stage.rotation.set(0, Math.atan2(-_fwd.x, -_fwd.z), 0);
+}
+function layoutAxes() {
+  plot.updateWorldMatrix(true, false);
+  _local.copy(headPos); plot.worldToLocal(_local);
+  const lx = _local.x, lz = _local.z, n = Math.hypot(lx, lz);
+  if (n < 0.05) return;
+  if (lx > 0.06) sx = 1; else if (lx < -0.06) sx = -1;
+  if (lz > 0.06) sz = 1; else if (lz < -0.06) sz = -1;
+  wallXp.visible = sx < 0; wallXn.visible = sx > 0;      // show only the two far walls
+  wallZp.visible = sz < 0; wallZn.visible = sz > 0;
+  const yb = -H - 0.05;
+  for (const t of axisUI.x.ticks) t.mesh.position.set(t.p, yb, sz * (H + 0.06));
+  axisUI.x.title.position.set(0, -H - 0.115, sz * (H + 0.085));
+  for (const t of axisUI.z.ticks) t.mesh.position.set(sx * (H + 0.085), yb, t.p);
+  axisUI.z.title.position.set(sx * (H + 0.115), -H - 0.115, 0);
+  // market value goes on the vertical edge at the viewer's left, never at the shared corner
+  const same = sx * sz > 0;
+  const cx = same ? -sx * H : sx * H, cz = same ? sz * H : -sz * H;
+  const leftX = -lz / n, leftZ = lx / n;
+  for (const t of axisUI.y.ticks) t.mesh.position.set(cx + leftX * 0.085, t.p, cz + leftZ * 0.085);
+  axisUI.y.title.position.set(cx + leftX * 0.03, H + 0.06, cz + leftZ * 0.03);
+}
+const placed = [];
+function declutter() {                           // hide a label rather than let it overlap
+  _f.copy(stage.position).sub(headPos);
+  if (_f.lengthSq() < 0.04) return;
+  _f.normalize(); _r.set(-_f.z, 0, _f.x);
+  if (_r.lengthSq() < 1e-6) return;
+  _r.normalize(); _u.crossVectors(_r, _f);
+  placed.length = 0;
+  for (const it of clutter) {
+    if (it.fixed && !it.obj.visible) continue;
+    it.obj.getWorldPosition(_p).sub(headPos);
+    const depth = _p.dot(_f);
+    if (depth < 0.15) { if (!it.fixed) it.obj.visible = false; continue; }
+    it.cx = _p.dot(_r) / depth; it.cy = _p.dot(_u) / depth;
+    it.hw = it.w * 0.54 / depth; it.hh = it.h * 0.54 / depth;
+    if (it.fixed) { placed.push(it); continue; }
+    const grow = it.obj.visible ? 1 : 1.2;       // hysteresis so labels do not flicker
+    let clash = false;
+    for (const o of placed) {
+      if (Math.abs(it.cx - o.cx) < it.hw * grow + o.hw && Math.abs(it.cy - o.cy) < it.hh * grow + o.hh) {
+        clash = true; break;
+      }
+    }
+    it.obj.visible = !clash;
+    if (!clash) placed.push(it);
+  }
+}
+
+/* =====================================================================
+   10. WEBXR SESSION AND PAGE BUTTONS
+   ===================================================================== */
+async function enterXR(mode) {
+  if (renderer.xr.isPresenting || !navigator.xr) return;
+  try {
+    const session = await navigator.xr.requestSession(mode, { optionalFeatures: ['local-floor'] });
+    let refType = 'local-floor';
+    try { await session.requestReferenceSpace('local-floor'); } catch (e) { refType = 'local'; }
+    floorKnown = refType === 'local-floor';
+    renderer.xr.setReferenceSpaceType(refType);
+    xrMode = mode;
+    await renderer.xr.setSession(session);
+    statusEl.textContent = '';
+  } catch (err) {
+    statusEl.textContent = 'Could not start the session: ' + (err && err.message ? err.message : err);
+  }
+}
+renderer.xr.addEventListener('sessionstart', () => {
+  inXR = true; controls.enabled = false;
+  const ar = xrMode === 'immersive-ar';
+  scene.background = ar ? null : BG;             // passthrough needs a transparent background
+  ground.visible = !ar && floorKnown;
+  exitPanel.visible = true; exitPanel.userData.active = true;
+  placePending = true;
+  refreshModeText(); resetAll();
+});
+renderer.xr.addEventListener('sessionend', () => {
+  inXR = false;
+  scene.background = BG; ground.visible = true;
+  exitPanel.visible = false; exitPanel.userData.active = false;
+  stage.position.copy(STAGE_HOME); stage.rotation.set(0, 0, 0);
+  for (const ptr of pointers) if (ptr.cursor) ptr.cursor.visible = false;
+  camera.fov = 60; camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+  controls.enabled = true;
+  refreshModeText(); resetAll();
+});
+
+const btnVR = document.getElementById('btnVR'), btnAR = document.getElementById('btnAR');
+if (navigator.xr) {
+  navigator.xr.isSessionSupported('immersive-vr').then((ok) => {
+    btnVR.disabled = !ok; btnVR.textContent = ok ? 'Enter VR' : 'VR not available on this device';
+  }).catch(() => { btnVR.textContent = 'VR not available on this device'; });
+  navigator.xr.isSessionSupported('immersive-ar').then((ok) => { btnAR.hidden = !ok; }).catch(() => {});
+} else {
+  btnVR.textContent = window.isSecureContext ? 'VR not available in this browser' : 'VR needs an https:// address';
+}
+btnVR.addEventListener('click', () => enterXR('immersive-vr'));
+btnAR.addEventListener('click', () => enterXR('immersive-ar'));
+
+window.addEventListener('resize', () => {
+  if (renderer.xr.isPresenting) return;
+  camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+/* =====================================================================
+   11. FRAME LOOP
+   ===================================================================== */
+renderer.setAnimationLoop((time, frame) => {
+  const now = performance.now();
+  let havePose = false;
+  if (renderer.xr.isPresenting) {
+    const ref = renderer.xr.getReferenceSpace();
+    const pose = frame && ref ? frame.getViewerPose(ref) : null;
+    if (pose) {
+      const p = pose.transform.position, o = pose.transform.orientation;
+      headPos.set(p.x, p.y, p.z); headQuat.set(o.x, o.y, o.z, o.w); havePose = true;
+      if (now - lastFrame > 2500) placePending = true;     // headset was off: re-centre
+      if (placePending) { placePending = false; placeUntil = now + 400; }
+      if (now < placeUntil) placeStage();
+    }
+    for (const ptr of pointers) {
+      if (ptr.controller && ptr.connected && (ptr.trig || ptr.grip)) applyTwist(ptr);
+    }
+  } else {
+    controls.update();
+    headPos.copy(camera.position); havePose = true;
+  }
+  lastFrame = now;
+  if (havePose) {
+    layoutAxes();
+    for (const b of billboards) b.lookAt(headPos);         // text always faces the viewer
+    declutter();
+  }
+  stage.updateMatrixWorld(true);
+  updatePointers();
+  if (dirty && now - lastActivity > IDLE_MS) resetAll();   // about 45 s idle: clean state
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
