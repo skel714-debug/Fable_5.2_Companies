@@ -9,7 +9,7 @@
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
   canvas { display: block; }
   #ui { position: fixed; top: 12px; left: 12px; width: 340px; max-width: calc(100vw - 24px);
-    box-sizing: border-box; padding: 14px 16px; border: 1px solid #3a4a66; border-radius: 10px;
+    box-sizing: border-box; padding: 12px 14px; border: 1px solid #3a4a66; border-radius: 10px;
     background: rgba(14, 22, 38, 0.92); pointer-events: none; }
   #ui h1 { margin: 0 0 6px; font-size: 19px; line-height: 1.25; }
   #ui p { margin: 6px 0; font-size: 13px; line-height: 1.4; color: #c5d0e2; }
@@ -33,11 +33,10 @@
 <body>
 <div id="ui">
   <h1>50 companies in five dimensions</h1>
-  <p>A 3D scatter plot: revenue, market value and employees on log scales. Colour shows sector, size shows company age.</p>
   <p class="warn">The figures are approximate and illustrative (roughly 2024-25). This is not a citable source.</p>
   <button id="btnVR" disabled>Checking for VR...</button>
   <button id="btnAR" hidden>Enter mixed reality (passthrough)</button>
-  <p>On a desktop: drag to orbit, scroll to zoom, click a sphere for details, click a legend row to hide or show a sector.</p>
+  <p>Desktop: drag to orbit, scroll to zoom, click a sphere for details, click a legend row to hide or show a sector.</p>
   <p id="status">Loading the 3D library... If this message stays, the CDN could not be reached.</p>
 </div>
 
@@ -171,12 +170,14 @@ const stage = new THREE.Group();                 // everything; placed in front 
 stage.position.copy(STAGE_HOME); scene.add(stage);
 const plot = new THREE.Group();                  // the part that rotates
 plot.rotation.y = DEFAULT_YAW; stage.add(plot);
+const rig = new THREE.Group();                   // title, legend, side panels; turns to stay beside the plot
+stage.add(rig);
 const sun = new THREE.DirectionalLight(0xffffff, 1.6);
 sun.position.set(1.0, 2.5, 2.0); stage.add(sun); stage.add(sun.target);
 
-function homeCamera() {
+function homeCamera() {                          // close enough to read, far enough to fit every panel
   const aspect = window.innerWidth / window.innerHeight;
-  camera.position.set(STAGE_HOME.x, STAGE_HOME.y + EYE_DROP, STAGE_HOME.z + Math.max(2.4, 2.3 / aspect));
+  camera.position.set(STAGE_HOME.x, STAGE_HOME.y + EYE_DROP, STAGE_HOME.z + Math.max(1.95, 0.12 + 2.3 / aspect));
   controls.target.copy(STAGE_HOME); controls.update(); controls.saveState();
 }
 homeCamera();
@@ -216,7 +217,10 @@ function makePanel(wM, hM, draw) {
   const ctx = canvas.getContext('2d');
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = MAX_ANISO;
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(wM, hM), new THREE.MeshBasicMaterial({ map: tex }));
+  // "transparent" only moves text into the later draw pass, after the floor, so the floor
+  // never dims a label beneath it. The backing is fully opaque and depth testing stays on.
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(wM, hM),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
   mesh.userData.w = wM; mesh.userData.h = hM;
   mesh.userData.redraw = (arg) => { draw(ctx, canvas.width, canvas.height, arg); tex.needsUpdate = true; };
   mesh.userData.redraw();
@@ -263,7 +267,9 @@ function lineSegs(arr, color) {
   plot.add(lineSegs(f, 0x5a6f92));
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(S, S), new THREE.MeshBasicMaterial({
     color: 0x0e1626, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }));
-  floor.rotation.x = -Math.PI / 2; floor.position.y = -H - 0.002; plot.add(floor);
+  floor.rotation.x = -Math.PI / 2; floor.position.y = -H - 0.002;
+  floor.renderOrder = -1;                        // drawn before any text
+  plot.add(floor);
 }
 function wallLines(axis, sign) {                 // grid on one side wall; only far walls are shown
   const a = [], c = sign * H;
@@ -340,7 +346,8 @@ const tagCanvas = document.createElement('canvas'); tagCanvas.width = 1024; tagC
 const tagCtx = tagCanvas.getContext('2d');
 const tagTex = new THREE.CanvasTexture(tagCanvas);
 tagTex.colorSpace = THREE.SRGBColorSpace; tagTex.anisotropy = MAX_ANISO;
-const tag = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: tagTex }));
+const tag = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
+  new THREE.MeshBasicMaterial({ map: tagTex, transparent: true }));
 tag.visible = false; plot.add(tag); billboards.push(tag);
 let tagFor = null;
 function showTag(p) {
@@ -375,6 +382,7 @@ for (const k of ['x', 'y', 'z']) {
 
 /* =====================================================================
    6. IN-SCENE PANELS: title, instruction, legend, details, exit
+   All of these live in "rig", which turns to keep them beside the plot.
    ===================================================================== */
 const titlePanel = makePanel(1.10, 0.14, (ctx, w, h) => {
   drawBacking(ctx, w, h);
@@ -382,7 +390,7 @@ const titlePanel = makePanel(1.10, 0.14, (ctx, w, h) => {
   fitText(ctx, 'Figures are approximate and illustrative (c. 2024-25) - not a citable source.',
     w / 2, h * 0.76, w - 80, h * 0.2, '500', AMBER, 'center');
 });
-titlePanel.position.set(0, 0.66, 0.40); stage.add(titlePanel); billboards.push(titlePanel);
+titlePanel.position.set(0, 0.66, 0.40); rig.add(titlePanel); billboards.push(titlePanel);
 
 const instruction = makePanel(1.10, 0.13, (ctx, w, h, text) => {
   text = text || (inXR ? TEXT_VR : TEXT_DESKTOP);
@@ -398,42 +406,43 @@ const instruction = makePanel(1.10, 0.13, (ctx, w, h, text) => {
   ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   lines.forEach((l, i) => ctx.fillText(l, w / 2, y0 + i * lh));
 });
-instruction.position.set(0, -0.74, 0.25); stage.add(instruction); billboards.push(instruction);
+instruction.position.set(0, -0.78, 0.25); rig.add(instruction); billboards.push(instruction);
 
+const LEG_W = 0.46;
 const legend = new THREE.Group();
-legend.position.set(-0.95, 0, 0.12); stage.add(legend); billboards.push(legend);
-const legendHeader = makePanel(0.40, 0.085, (ctx, w, h) => {
+legend.position.set(-1.0, 0, 0.12); rig.add(legend); billboards.push(legend);
+const legendHeader = makePanel(LEG_W, 0.09, (ctx, w, h) => {
   drawBacking(ctx, w, h);
-  fitText(ctx, 'Sectors', 28, h * 0.34, w - 56, h * 0.34, '700');
+  fitText(ctx, 'Sectors', 28, h * 0.34, w - 56, h * 0.36, '700');
   fitText(ctx, inXR ? 'Point + trigger to hide or show' : 'Click a row to hide or show',
-    28, h * 0.74, w - 56, h * 0.25, '500', MUTED);
+    28, h * 0.74, w - 56, h * 0.27, '500', MUTED);
 });
-legendHeader.position.y = 0.2315; legend.add(legendHeader);
+legendHeader.position.y = 0.2665; legend.add(legendHeader);
 const legendRows = SECTORS.map((s, i) => {
-  const row = makePanel(0.40, 0.06, (ctx, w, h, hidden) => {
+  const row = makePanel(LEG_W, 0.072, (ctx, w, h, hidden) => {
     drawBacking(ctx, w, h, hidden ? '#0a0f1a' : '#111c30');
     ctx.beginPath(); ctx.arc(h * 0.55, h / 2, h * 0.26, 0, Math.PI * 2);
-    if (hidden) { ctx.strokeStyle = s.color; ctx.lineWidth = 5; ctx.stroke(); }
+    if (hidden) { ctx.strokeStyle = s.color; ctx.lineWidth = 6; ctx.stroke(); }
     else { ctx.fillStyle = s.color; ctx.fill(); }
-    fitText(ctx, s.name, h * 1.1, h / 2, w - h * 1.1 - 190, h * 0.42, '600', hidden ? '#7f8aa0' : INK);
-    fitText(ctx, hidden ? 'hidden' : 'shown', w - 28, h / 2, 150, h * 0.3, '500',
+    fitText(ctx, s.name, h * 1.1, h / 2, w - h * 1.1 - 200, h * 0.44, '600', hidden ? '#7f8aa0' : INK);
+    fitText(ctx, hidden ? 'hidden' : 'shown', w - 28, h / 2, 170, h * 0.34, '600',
       hidden ? '#ffb454' : '#8fd18f', 'right');
   });
-  row.position.y = 0.151 - 0.068 * i; legend.add(row);
+  row.position.y = 0.1775 - 0.08 * i; legend.add(row);
   makePickable(row, { kind: 'legend', sector: i });
   return row;
 });
-const sizeKey = makePanel(0.40, 0.115, (ctx, w, h) => {
+const sizeKey = makePanel(LEG_W, 0.125, (ctx, w, h) => {
   drawBacking(ctx, w, h);
-  fitText(ctx, 'Size = company age', 28, 38, w - 56, 38, '600');
+  fitText(ctx, 'Size = company age', 28, 40, w - 56, 40, '600');
   [25, 100, 200].forEach((age, i) => {
     const cx = w * (0.2 + 0.3 * i);
-    ctx.beginPath(); ctx.arc(cx, 112, radiusFor(age) * PX_PER_M, 0, Math.PI * 2);
+    ctx.beginPath(); ctx.arc(cx, 122, radiusFor(age) * PX_PER_M, 0, Math.PI * 2);
     ctx.fillStyle = '#c9d4e6'; ctx.fill();
-    fitText(ctx, age + ' yrs', cx, 180, 200, 30, '500', MUTED, 'center');
+    fitText(ctx, age + ' yrs', cx, 195, 220, 32, '500', MUTED, 'center');
   });
 });
-sizeKey.position.y = -0.2165; legend.add(sizeKey);
+sizeKey.position.y = -0.249; legend.add(sizeKey);
 
 const money = (b) => b >= 1000
   ? '$' + (b / 1000).toFixed(2).replace(/\.?0+$/, '') + ' trillion'
@@ -461,7 +470,7 @@ const detail = makePanel(0.50, 0.42, (ctx, w, h, c) => {
     40, 712, w - 80, 30, '500', MUTED);
 });
 detail.position.set(0.97, 0.10, 0.12); detail.visible = false;
-stage.add(detail); billboards.push(detail);
+rig.add(detail); billboards.push(detail);
 makePickable(detail, { kind: 'detail' }); detail.userData.active = false;
 
 const exitPanel = makePanel(0.30, 0.10, (ctx, w, h) => {
@@ -469,14 +478,14 @@ const exitPanel = makePanel(0.30, 0.10, (ctx, w, h) => {
   fitText(ctx, 'EXIT', w / 2, h * 0.40, w - 40, h * 0.42, '800', '#ffffff', 'center');
   fitText(ctx, 'point here + pull trigger', w / 2, h * 0.78, w - 40, h * 0.17, '500', '#ffd9de', 'center');
 });
-exitPanel.position.set(0.97, -0.40, 0.12); exitPanel.visible = false;
-stage.add(exitPanel); billboards.push(exitPanel);
+exitPanel.position.set(0.97, -0.34, 0.12); exitPanel.visible = false;
+rig.add(exitPanel); billboards.push(exitPanel);
 makePickable(exitPanel, { kind: 'exit' }); exitPanel.userData.active = false;
 
 // label de-cluttering list, in priority order: fixed panels, axis titles, then ticks
 const clutter = [];
 const reg = (obj, w, h, fixed) => clutter.push({ obj, w, h, fixed, cx: 0, cy: 0, hw: 0, hh: 0 });
-reg(titlePanel, 1.10, 0.14, true); reg(instruction, 1.10, 0.13, true); reg(legend, 0.40, 0.548, true);
+reg(titlePanel, 1.10, 0.14, true); reg(instruction, 1.10, 0.13, true); reg(legend, LEG_W, 0.623, true);
 reg(detail, 0.50, 0.42, true); reg(exitPanel, 0.30, 0.10, true);
 for (const k of ['x', 'y', 'z']) { const m = axisUI[k].title; reg(m, m.userData.w, m.userData.h, false); }
 for (const i of [2, 0, 4, 1, 3]) for (const k of ['x', 'y', 'z']) {
@@ -661,17 +670,32 @@ function updatePointers() {
 }
 
 /* =====================================================================
-   9. PER-FRAME LAYOUT: placement, axis labels, de-cluttering
+   9. PER-FRAME LAYOUT: placement, panel rig, axis labels, de-cluttering
    ===================================================================== */
 const headPos = new THREE.Vector3(0, 1.5, 0), headQuat = new THREE.Quaternion();
 let placePending = false, placeUntil = 0, lastFrame = performance.now();
 let sx = -1, sz = 1;                             // which side of the plot the viewer is on
+let rigYaw = 0;
+const RIG_DEADZONE = 0.14;                       // radians; in VR the panels ignore small head movements
+const TITLE_PUSH = 0.2, TITLE_DROP = 0.085;      // how far an axis title moves when its axis points at you
 
 function placeStage() {                          // 1.8 m ahead of the head, at eye height
   _fwd.set(0, 0, -1).applyQuaternion(headQuat); _fwd.y = 0;
   if (_fwd.lengthSq() < 1e-4) _fwd.set(0, 0, -1); else _fwd.normalize();
   stage.position.set(headPos.x + _fwd.x * DIST, headPos.y - EYE_DROP, headPos.z + _fwd.z * DIST);
   stage.rotation.set(0, Math.atan2(-_fwd.x, -_fwd.z), 0);
+  rigYaw = 0; rig.rotation.y = 0;
+}
+function updateRig() {                           // legend stays left, details right, from any side
+  stage.updateWorldMatrix(true, false);
+  _local.copy(headPos); stage.worldToLocal(_local);
+  if (Math.hypot(_local.x, _local.z) < 0.3) return;
+  const want = Math.atan2(_local.x, _local.z);
+  let diff = want - rigYaw;
+  diff = Math.atan2(Math.sin(diff), Math.cos(diff));           // wrap to -PI..PI
+  if (!inXR) rigYaw = want;
+  else if (Math.abs(diff) > RIG_DEADZONE) rigYaw += diff - Math.sign(diff) * RIG_DEADZONE;
+  rig.rotation.y = rigYaw;
 }
 function layoutAxes() {
   plot.updateWorldMatrix(true, false);
@@ -682,11 +706,14 @@ function layoutAxes() {
   if (lz > 0.06) sz = 1; else if (lz < -0.06) sz = -1;
   wallXp.visible = sx < 0; wallXn.visible = sx > 0;      // show only the two far walls
   wallZp.visible = sz < 0; wallZn.visible = sz > 0;
-  const yb = -H - 0.05;
+  // endX / endZ are near 1 when that axis points straight at the viewer. Its title then
+  // slides outward and down so it does not sit on top of its own tick labels.
+  const endX = (lx / n) * (lx / n), endZ = (lz / n) * (lz / n);
+  const yb = -H - 0.05, yt = -H - 0.115;
   for (const t of axisUI.x.ticks) t.mesh.position.set(t.p, yb, sz * (H + 0.06));
-  axisUI.x.title.position.set(0, -H - 0.115, sz * (H + 0.085));
+  axisUI.x.title.position.set(0, yt - TITLE_DROP * endX, sz * (H + 0.085 + TITLE_PUSH * endX));
   for (const t of axisUI.z.ticks) t.mesh.position.set(sx * (H + 0.085), yb, t.p);
-  axisUI.z.title.position.set(sx * (H + 0.115), -H - 0.115, 0);
+  axisUI.z.title.position.set(sx * (H + 0.115 + TITLE_PUSH * endZ), yt - TITLE_DROP * endZ, 0);
   // market value goes on the vertical edge at the viewer's left, never at the shared corner
   const same = sx * sz > 0;
   const cx = same ? -sx * H : sx * H, cz = same ? sz * H : -sz * H;
@@ -803,6 +830,7 @@ renderer.setAnimationLoop((time, frame) => {
   }
   lastFrame = now;
   if (havePose) {
+    updateRig();
     layoutAxes();
     for (const b of billboards) b.lookAt(headPos);         // text always faces the viewer
     declutter();
