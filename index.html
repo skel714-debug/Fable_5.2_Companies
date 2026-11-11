@@ -1,3 +1,15 @@
+All six are in the file below. As before it is untested, so check it on a desktop first.
+
+1. **Details panel:** slightly larger, with type about 25% bigger throughout. The "Founded" row now reads "1904 (121 years old)" so it fits at the larger size.
+2. **Square panels on desktop:** text now sits flat to the screen. In the headset it still turns to face you.
+3. **"Employees (log)":** pulled back in by about a third, and the same applies to the revenue title.
+4. **Leader line:** a thin white line runs from the selected sphere to the left edge of the details panel.
+5. **Sector focus:** hover over a legend row (or point at it in VR) and the other four sectors fade to 15%. Clicking still hides or shows the sector.
+6. **Controller buzz:** a light pulse when the ray lands on a sphere or button, and a firmer one on the trigger. It does nothing on desktop or with hand tracking.
+
+On desktop you can check everything except the buzz.
+
+```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -36,7 +48,7 @@
   <p class="warn">The figures are approximate and illustrative (roughly 2024-25). This is not a citable source.</p>
   <button id="btnVR" disabled>Checking for VR...</button>
   <button id="btnAR" hidden>Enter mixed reality (passthrough)</button>
-  <p>Desktop: drag to orbit, scroll to zoom, click a sphere for details, click a legend row to hide or show a sector.</p>
+  <p>Desktop: drag to orbit, scroll to zoom, click a sphere for details, hover a legend row to focus a sector, click it to hide or show.</p>
   <p id="status">Loading the 3D library... If this message stays, the CDN could not be reached.</p>
 </div>
 
@@ -139,6 +151,7 @@ const axisPos = (k, v) =>
 const radiusFor = (age) => 0.006 + 0.0013 * Math.sqrt(age);   // metres
 
 const DIST = 1.8, EYE_DROP = 0.05, DEFAULT_YAW = 0.45, TWIST_GAIN = 1.5, IDLE_MS = 45000;
+const DIM = 0.15;                               // opacity of sectors faded by legend focus
 const STAGE_HOME = new THREE.Vector3(0, 1.45, -1.8);
 const TEXT_VR = 'Point at a sphere and pull the trigger to see its details; hold the trigger on empty space and twist your wrist to turn the plot.';
 const TEXT_DESKTOP = 'Click a sphere to see its details; drag to orbit and scroll to zoom.';
@@ -284,13 +297,16 @@ function wallLines(axis, sign) {                 // grid on one side wall; only 
 const wallXn = wallLines('x', -1), wallXp = wallLines('x', 1);
 const wallZn = wallLines('z', -1), wallZp = wallLines('z', 1);
 
+// Point, drop-line and foot materials are flagged transparent from the start so a sector
+// can be faded later without rebuilding shaders. At opacity 1 they behave as opaque.
 const sectorGroups = SECTORS.map(() => { const g = new THREE.Group(); plot.add(g); return g; });
+const sectorMats = SECTORS.map(() => []);
 const sphereGeo = new THREE.SphereGeometry(1, 18, 12);
 const colliderGeo = new THREE.SphereGeometry(1, 10, 8);
 const colliderMat = new THREE.MeshBasicMaterial({ visible: false });
 const points = COMPANIES.map((c, index) => {
   const r = radiusFor(c.age), color = new THREE.Color(SECTORS[c.sector].color);
-  const mesh = new THREE.Mesh(sphereGeo, new THREE.MeshLambertMaterial({ color }));
+  const mesh = new THREE.Mesh(sphereGeo, new THREE.MeshLambertMaterial({ color, transparent: true }));
   mesh.position.set(axisPos('x', c.revenue), axisPos('y', c.marketCap), axisPos('z', c.employees));
   mesh.scale.setScalar(r);
   const collider = new THREE.Mesh(colliderGeo, colliderMat);   // enlarged, invisible target
@@ -298,6 +314,7 @@ const points = COMPANIES.map((c, index) => {
   collider.scale.setScalar(Math.max(r * 1.9, 0.034));
   collider.userData = { kind: 'point', index, active: true };
   sectorGroups[c.sector].add(mesh, collider);
+  sectorMats[c.sector].push(mesh.material);
   pickables.push(collider);
   return { company: c, mesh, collider, r, color };
 });
@@ -324,7 +341,10 @@ SECTORS.forEach((s, si) => {                     // depth cue: a line from each 
     lines.push(x, y, z, x, -H, z); feet.push(x, z);
   }
   const dim = new THREE.Color(s.color).multiplyScalar(0.7);
-  sectorGroups[si].add(lineSegs(lines, dim), makeFeet(feet, dim));
+  const drops = lineSegs(lines, dim), feetMesh = makeFeet(feet, dim);
+  drops.material.transparent = true; feetMesh.material.transparent = true;
+  sectorMats[si].push(drops.material, feetMesh.material);
+  sectorGroups[si].add(drops, feetMesh);
 });
 
 // thick stem for the hovered or selected point, ring for the selected point, name tag on hover
@@ -341,6 +361,11 @@ function setStem(p) {
 const ring = new THREE.Mesh(new THREE.RingGeometry(1.35, 1.6, 32),
   new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
 ring.visible = false; plot.add(ring); billboards.push(ring);
+
+// leader: a thin rod from the selected sphere to the details panel (positioned every frame)
+const leader = new THREE.Mesh(new THREE.CylinderGeometry(0.0015, 0.0015, 1, 6),
+  new THREE.MeshBasicMaterial({ color: 0xffffff }));
+leader.visible = false; scene.add(leader);
 
 const tagCanvas = document.createElement('canvas'); tagCanvas.width = 1024; tagCanvas.height = 100;
 const tagCtx = tagCanvas.getContext('2d');
@@ -414,7 +439,7 @@ legend.position.set(-1.0, 0, 0.12); rig.add(legend); billboards.push(legend);
 const legendHeader = makePanel(LEG_W, 0.09, (ctx, w, h) => {
   drawBacking(ctx, w, h);
   fitText(ctx, 'Sectors', 28, h * 0.34, w - 56, h * 0.36, '700');
-  fitText(ctx, inXR ? 'Point + trigger to hide or show' : 'Click a row to hide or show',
+  fitText(ctx, inXR ? 'Point to focus, trigger to hide or show' : 'Hover to focus, click to hide or show',
     28, h * 0.74, w - 56, h * 0.27, '500', MUTED);
 });
 legendHeader.position.y = 0.2665; legend.add(legendHeader);
@@ -448,28 +473,29 @@ const money = (b) => b >= 1000
   ? '$' + (b / 1000).toFixed(2).replace(/\.?0+$/, '') + ' trillion'
   : '$' + b + ' billion';
 const people = (k) => Math.round(k * 1000).toLocaleString('en-US');
-const detail = makePanel(0.50, 0.42, (ctx, w, h, c) => {
+const DET_W = 0.56, DET_H = 0.46;
+const detail = makePanel(DET_W, DET_H, (ctx, w, h, c) => {
   const col = c ? SECTORS[c.sector].color : EDGE;
   drawBacking(ctx, w, h, PANEL_BG, col, 8);
   if (!c) return;
-  ctx.fillStyle = col; ctx.beginPath(); ctx.arc(58, 62, 16, 0, Math.PI * 2); ctx.fill();
-  fitText(ctx, SECTORS[c.sector].name, 90, 64, w - 130, 36, '600', col);
-  fitText(ctx, c.name, 40, 140, w - 80, 68, '700');
-  ctx.fillStyle = '#3a4a66'; ctx.fillRect(40, 192, w - 80, 3);
+  ctx.fillStyle = col; ctx.beginPath(); ctx.arc(60, 66, 18, 0, Math.PI * 2); ctx.fill();
+  fitText(ctx, SECTORS[c.sector].name, 94, 68, w - 134, 44, '600', col);
+  fitText(ctx, c.name, 40, 150, w - 80, 78, '700');
+  ctx.fillStyle = '#3a4a66'; ctx.fillRect(40, 206, w - 80, 3);
   const rows = [['Revenue', money(c.revenue)], ['Market value', money(c.marketCap)],
-    ['Employees', people(c.employees)], ['Founded', `${c.founded} - about ${c.age} years old`]];
+    ['Employees', people(c.employees)], ['Founded', `${c.founded} (${c.age} years old)`]];
   rows.forEach(([k, v], i) => {
-    const y = 252 + i * 84;
-    fitText(ctx, k, 40, y, 250, 36, '500', MUTED);
-    fitText(ctx, v, 300, y, w - 340, 46, '700');
+    const y = 270 + i * 96;
+    fitText(ctx, k, 40, y, 290, 46, '500', MUTED);
+    fitText(ctx, v, 350, y, w - 390, 58, '700');
   });
-  fitText(ctx, 'Approximate, illustrative figures (c. 2024-25).', 40, 592, w - 80, 30, '500', AMBER);
-  fitText(ctx, 'Not a citable source.', 40, 632, w - 80, 30, '500', AMBER);
-  ctx.fillStyle = '#3a4a66'; ctx.fillRect(40, 668, w - 80, 3);
+  ctx.fillStyle = '#3a4a66'; ctx.fillRect(40, 622, w - 80, 3);
+  fitText(ctx, 'Approximate, illustrative figures (c. 2024-25).', 40, 668, w - 80, 38, '500', AMBER);
+  fitText(ctx, 'Not a citable source.', 40, 714, w - 80, 38, '500', AMBER);
   fitText(ctx, inXR ? 'Point here and pull the trigger to close' : 'Click this panel to close',
-    40, 712, w - 80, 30, '500', MUTED);
+    40, 778, w - 80, 40, '600', MUTED);
 });
-detail.position.set(0.97, 0.10, 0.12); detail.visible = false;
+detail.position.set(1.00, 0.10, 0.12); detail.visible = false;
 rig.add(detail); billboards.push(detail);
 makePickable(detail, { kind: 'detail' }); detail.userData.active = false;
 
@@ -478,7 +504,7 @@ const exitPanel = makePanel(0.30, 0.10, (ctx, w, h) => {
   fitText(ctx, 'EXIT', w / 2, h * 0.40, w - 40, h * 0.42, '800', '#ffffff', 'center');
   fitText(ctx, 'point here + pull trigger', w / 2, h * 0.78, w - 40, h * 0.17, '500', '#ffd9de', 'center');
 });
-exitPanel.position.set(0.97, -0.34, 0.12); exitPanel.visible = false;
+exitPanel.position.set(1.00, -0.34, 0.12); exitPanel.visible = false;
 rig.add(exitPanel); billboards.push(exitPanel);
 makePickable(exitPanel, { kind: 'exit' }); exitPanel.userData.active = false;
 
@@ -486,7 +512,7 @@ makePickable(exitPanel, { kind: 'exit' }); exitPanel.userData.active = false;
 const clutter = [];
 const reg = (obj, w, h, fixed) => clutter.push({ obj, w, h, fixed, cx: 0, cy: 0, hw: 0, hh: 0 });
 reg(titlePanel, 1.10, 0.14, true); reg(instruction, 1.10, 0.13, true); reg(legend, LEG_W, 0.623, true);
-reg(detail, 0.50, 0.42, true); reg(exitPanel, 0.30, 0.10, true);
+reg(detail, DET_W, DET_H, true); reg(exitPanel, 0.30, 0.10, true);
 for (const k of ['x', 'y', 'z']) { const m = axisUI[k].title; reg(m, m.userData.w, m.userData.h, false); }
 for (const i of [2, 0, 4, 1, 3]) for (const k of ['x', 'y', 'z']) {
   const m = axisUI[k].ticks[i].mesh; reg(m, m.userData.w, m.userData.h, false);
@@ -497,6 +523,7 @@ for (const i of [2, 0, 4, 1, 3]) for (const k of ['x', 'y', 'z']) {
    ===================================================================== */
 let selected = null, dirty = false, lastActivity = performance.now();
 let highlighted = new Set();
+let focus = -1;                                  // sector kept bright while its legend row is pointed at
 const sectorOn = SECTORS.map(() => true);
 const pointers = [];
 const mousePtr = { hover: null };
@@ -511,6 +538,19 @@ function setHighlight(o, on) {
     else p.mesh.material.emissive.setRGB(0, 0, 0);
   } else if (ud.glow) ud.glow.visible = on;
 }
+function updateFocus() {                         // pointing at a visible sector's row fades the others
+  let f = -1;
+  for (const ptr of pointers) {
+    const ud = ptr.hover ? ptr.hover.userData : null;
+    if (ud && ud.kind === 'legend' && sectorOn[ud.sector]) { f = ud.sector; break; }
+  }
+  if (f === focus) return;
+  focus = f;
+  for (let i = 0; i < SECTORS.length; i++) {
+    const faded = f >= 0 && i !== f;
+    for (const m of sectorMats[i]) { m.opacity = faded ? DIM : 1; m.depthWrite = !faded; }
+  }
+}
 function refreshHighlights() {
   const want = new Set(); let hoverPoint = null;
   for (const ptr of pointers) if (ptr.hover) {
@@ -522,6 +562,7 @@ function refreshHighlights() {
   highlighted = want;
   showTag(hoverPoint);
   setStem(hoverPoint || selected);
+  updateFocus();
   renderer.domElement.style.cursor = mousePtr.hover ? 'pointer' : '';
 }
 function selectPoint(p) {
@@ -536,6 +577,7 @@ function setSectorVisible(i, v) {
   for (const p of points) if (p.company.sector === i) p.collider.userData.active = v;
   legendRows[i].userData.redraw(!v);
   if (!v && selected && selected.company.sector === i) selectPoint(null);
+  updateFocus();
 }
 function activate(obj) {
   const ud = obj.userData;
@@ -567,7 +609,8 @@ const raycaster = new THREE.Raycaster();
 const hits = [];
 const _v = new THREE.Vector3(), _fwd = new THREE.Vector3(), _local = new THREE.Vector3();
 const _f = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3(), _p = new THREE.Vector3();
-const _dq = new THREE.Quaternion(), _qi = new THREE.Quaternion();
+const _a = new THREE.Vector3(), _b = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
+const _dq = new THREE.Quaternion(), _qi = new THREE.Quaternion(), _pq = new THREE.Quaternion();
 
 function pick() {                                // uses raycaster.ray as already set
   hits.length = 0;
@@ -584,6 +627,21 @@ function pick() {                                // uses raycaster.ray as alread
   if (ui && pt) return ui.distance < pt.distance ? ui : pt;
   return ui || pt;
 }
+function buzz(ptr, strength, ms) {               // controller haptics; silently skipped if unsupported
+  const gp = ptr.source ? ptr.source.gamepad : null;
+  if (!gp) return;
+  try {
+    const act = gp.hapticActuators && gp.hapticActuators[0];
+    if (act && act.pulse) {
+      const r = act.pulse(strength, ms);
+      if (r && r.catch) r.catch(() => {});
+    } else if (gp.vibrationActuator && gp.vibrationActuator.playEffect) {
+      const r = gp.vibrationActuator.playEffect('dual-rumble',
+        { duration: ms, strongMagnitude: strength, weakMagnitude: strength });
+      if (r && r.catch) r.catch(() => {});
+    }
+  } catch (e) { /* haptics are optional */ }
+}
 
 for (let i = 0; i < 2; i++) {
   const c = renderer.xr.getController(i);
@@ -596,17 +654,20 @@ for (let i = 0; i < 2; i++) {
   const cursor = new THREE.Mesh(new THREE.SphereGeometry(0.008, 12, 8),
     new THREE.MeshBasicMaterial({ color: 0xffffff }));
   cursor.visible = false; scene.add(cursor);
-  const ptr = { controller: c, rayLine, cursor, hover: null, connected: false,
+  const ptr = { controller: c, rayLine, cursor, hover: null, connected: false, source: null,
     trig: false, grip: false, prevQuat: new THREE.Quaternion() };
   const startGrab = (key) => {
     if (!ptr.trig && !ptr.grip) ptr.prevQuat.copy(c.quaternion);
     ptr[key] = true; instruction.visible = false;
   };
-  c.addEventListener('connected', () => { ptr.connected = true; });
-  c.addEventListener('disconnected', () => { ptr.connected = false; ptr.trig = ptr.grip = false; });
+  c.addEventListener('connected', (e) => { ptr.connected = true; ptr.source = e.data || null; });
+  c.addEventListener('disconnected', () => {
+    ptr.connected = false; ptr.source = null; ptr.trig = ptr.grip = false;
+  });
   c.addEventListener('selectstart', () => {
     markActivity();
-    if (ptr.hover) activate(ptr.hover); else startGrab('trig');   // empty space: grab and twist
+    if (ptr.hover) { buzz(ptr, 0.8, 40); activate(ptr.hover); }
+    else startGrab('trig');                      // empty space: grab and twist
   });
   c.addEventListener('selectend', () => { ptr.trig = false; markActivity(); });
   c.addEventListener('squeezestart', () => { markActivity(); startGrab('grip'); });
@@ -664,7 +725,13 @@ function updatePointers() {
       hit = pick();
     }
     const obj = hit ? hit.object : null;
-    if (obj !== ptr.hover) { ptr.hover = obj; changed = true; if (obj) markActivity(); }
+    if (obj !== ptr.hover) {
+      ptr.hover = obj; changed = true;
+      if (obj) {
+        markActivity();
+        if (ptr.controller) buzz(ptr, obj.userData.kind === 'point' ? 0.4 : 0.25, 20);
+      }
+    }
   }
   if (changed) refreshHighlights();              // highlight before the trigger is pulled
 }
@@ -677,7 +744,7 @@ let placePending = false, placeUntil = 0, lastFrame = performance.now();
 let sx = -1, sz = 1;                             // which side of the plot the viewer is on
 let rigYaw = 0;
 const RIG_DEADZONE = 0.14;                       // radians; in VR the panels ignore small head movements
-const TITLE_PUSH = 0.2, TITLE_DROP = 0.085;      // how far an axis title moves when its axis points at you
+const TITLE_PUSH = 0.14, TITLE_DROP = 0.085;     // how far an axis title moves when its axis points at you
 
 function placeStage() {                          // 1.8 m ahead of the head, at eye height
   _fwd.set(0, 0, -1).applyQuaternion(headQuat); _fwd.y = 0;
@@ -696,6 +763,11 @@ function updateRig() {                           // legend stays left, details r
   if (!inXR) rigYaw = want;
   else if (Math.abs(diff) > RIG_DEADZONE) rigYaw += diff - Math.sign(diff) * RIG_DEADZONE;
   rig.rotation.y = rigYaw;
+}
+function faceViewer(obj) {
+  if (inXR) { obj.lookAt(headPos); return; }     // headset: turn toward the head
+  obj.parent.getWorldQuaternion(_pq).invert();   // desktop: sit square to the screen
+  obj.quaternion.copy(_pq).multiply(camera.quaternion);
 }
 function layoutAxes() {
   plot.updateWorldMatrix(true, false);
@@ -747,6 +819,17 @@ function declutter() {                           // hide a label rather than let
     it.obj.visible = !clash;
     if (!clash) placed.push(it);
   }
+}
+function updateLeader() {                        // rod from the selected sphere to the details panel
+  leader.visible = !!selected;
+  if (!selected) return;
+  selected.mesh.getWorldPosition(_a);
+  _b.set(-DET_W / 2, 0, 0); detail.localToWorld(_b);
+  const len = _a.distanceTo(_b);
+  if (len < 1e-4) { leader.visible = false; return; }
+  leader.position.copy(_a).add(_b).multiplyScalar(0.5);
+  leader.quaternion.setFromUnitVectors(UP, _b.sub(_a).divideScalar(len));
+  leader.scale.set(1, len, 1);
 }
 
 /* =====================================================================
@@ -832,10 +915,11 @@ renderer.setAnimationLoop((time, frame) => {
   if (havePose) {
     updateRig();
     layoutAxes();
-    for (const b of billboards) b.lookAt(headPos);         // text always faces the viewer
+    for (const b of billboards) faceViewer(b);             // text always faces the viewer
     declutter();
   }
   stage.updateMatrixWorld(true);
+  updateLeader();
   updatePointers();
   if (dirty && now - lastActivity > IDLE_MS) resetAll();   // about 45 s idle: clean state
   renderer.render(scene, camera);
@@ -843,3 +927,6 @@ renderer.setAnimationLoop((time, frame) => {
 </script>
 </body>
 </html>
+```
+
+Replace the contents of `index.html` with this; the last line should be `</html>`. After GitHub Pages updates, do a hard refresh (Ctrl+Shift+R).
